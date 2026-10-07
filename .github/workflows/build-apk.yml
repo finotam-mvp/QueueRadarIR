@@ -1,73 +1,408 @@
-name: Build QueueRadarIR APK
+package ir.queueradar.app
 
-on:
-  workflow_dispatch:
-  push:
-    branches: [ main ]
+import android.os.Bundle
+import androidx.activity.ComponentActivity
+import androidx.activity.compose.setContent
+import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.lazy.LazyColumn
+import androidx.compose.foundation.lazy.items
+import androidx.compose.material3.*
+import androidx.compose.runtime.*
+import androidx.compose.ui.Modifier
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.unit.dp
+import androidx.lifecycle.ViewModel
+import androidx.lifecycle.viewModelScope
+import androidx.lifecycle.viewmodel.compose.viewModel
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlin.random.Random
 
-jobs:
-  build:
-    runs-on: ubuntu-latest
+class MainActivity : ComponentActivity() {
+    override fun onCreate(savedInstanceState: Bundle?) {
+        super.onCreate(savedInstanceState)
+        setContent {
+            QueueRadarApp()
+        }
+    }
+}
 
-    permissions:
-      contents: read
+data class SymbolState(
+    val symbol: String,
+    val price: Int,
+    val queue: Long,
+    val queueDelta: Int,
+    val trades: Int,
+    val risk: Int,
+    val state: String
+)
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+class RadarViewModel : ViewModel() {
 
-      - name: Extract project ZIP
-        run: |
-          mkdir -p project
-          unzip -o QueueRadarIR.zip -d project
+    var symbols by mutableStateOf(
+        listOf(
+            SymbolState(
+                "وتجارت",
+                951,
+                12400000,
+                -18,
+                1832,
+                34,
+                "صف خرید سالم"
+            ),
+            SymbolState(
+                "فملی",
+                4230,
+                8700000,
+                -41,
+                2640,
+                72,
+                "در حال تخلیه"
+            ),
+            SymbolState(
+                "خودرو",
+                3380,
+                21500000,
+                -63,
+                5210,
+                91,
+                "احتمال شکست صف"
+            ),
+            SymbolState(
+                "شستا",
+                2145,
+                6300000,
+                8,
+                1140,
+                22,
+                "صف خرید قوی"
+            )
+        )
+    )
+        private set
 
-          echo "ZIP CONTENT:"
-          find project -maxdepth 5 -type f | sort
+    var lastUpdate by mutableStateOf("اکنون")
+        private set
 
-      - name: Detect project directory
-        run: |
-          if [ -f "project/settings.gradle.kts" ]; then
-            echo "PROJECT_DIR=project" >> "$GITHUB_ENV"
-          else
-            DIR=$(find project -name settings.gradle.kts -type f -print -quit | xargs dirname)
-            echo "PROJECT_DIR=$DIR" >> "$GITHUB_ENV"
-          fi
+    init {
+        viewModelScope.launch {
+            while (true) {
+                delay(4000)
 
-      - name: Setup Java
-        uses: actions/setup-java@v5
-        with:
-          distribution: temurin
-          java-version: "17"
+                symbols = symbols.map { s ->
 
-      - name: Fix Java/Kotlin JVM target
-        run: |
-          cat >> "$PROJECT_DIR/app/build.gradle.kts" <<'EOF'
+                    val newRisk = (
+                        s.risk + Random.nextInt(-2, 4)
+                    ).coerceIn(0, 100)
 
-          android {
-              compileOptions {
-                  sourceCompatibility = JavaVersion.VERSION_17
-                  targetCompatibility = JavaVersion.VERSION_17
-              }
-          }
+                    val newQueueDelta = (
+                        s.queueDelta + Random.nextInt(-3, 4)
+                    ).coerceIn(-100, 100)
 
-          kotlin {
-              jvmToolchain(17)
-          }
-          EOF
+                    val newState = when {
+                        newRisk >= 85 -> "احتمال شکست صف"
+                        newRisk >= 60 -> "در حال تخلیه"
+                        newRisk >= 35 -> "تحت نظر"
+                        else -> "صف خرید سالم"
+                    }
 
-      - name: Setup Gradle
-        uses: gradle/actions/setup-gradle@v4
-        with:
-          gradle-version: "8.9"
+                    s.copy(
+                        risk = newRisk,
+                        queueDelta = newQueueDelta,
+                        state = newState
+                    )
+                }
 
-      - name: Build APK
-        run: |
-          cd "$PROJECT_DIR"
-          gradle --no-daemon assembleDebug
+                lastUpdate = "چند ثانیه پیش"
+            }
+        }
+    }
+}
 
-      - name: Upload APK
-        uses: actions/upload-artifact@v4
-        with:
-          name: QueueRadarIR-debug
-          path: "**/app/build/outputs/apk/debug/app-debug.apk"
-          if-no-files-found: error
+@Composable
+fun QueueRadarApp(
+    vm: RadarViewModel = viewModel()
+) {
+
+    var tab by remember {
+        mutableIntStateOf(0)
+    }
+
+    MaterialTheme {
+
+        Scaffold(
+
+            topBar = {
+                TopAppBar(
+                    title = {
+                        Text(
+                            "صف‌بان ایران",
+                            fontWeight = FontWeight.Bold
+                        )
+                    },
+                    actions = {
+                        Text(
+                            "● زنده",
+                            color = MaterialTheme.colorScheme.primary,
+                            modifier = Modifier.padding(end = 16.dp)
+                        )
+                    }
+                )
+            },
+
+            bottomBar = {
+
+                NavigationBar {
+
+                    listOf(
+                        "رادار",
+                        "واچ‌لیست",
+                        "هشدارها"
+                    ).forEachIndexed { index, title ->
+
+                        NavigationBarItem(
+
+                            selected = tab == index,
+
+                            onClick = {
+                                tab = index
+                            },
+
+                            icon = {},
+
+                            label = {
+                                Text(title)
+                            }
+                        )
+                    }
+                }
+            }
+
+        ) { padding ->
+
+            when (tab) {
+
+                0 -> RadarScreen(
+                    vm = vm,
+                    padding = padding
+                )
+
+                1 -> WatchlistScreen(
+                    vm = vm,
+                    padding = padding
+                )
+
+                else -> AlertsScreen(
+                    padding = padding
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun RadarScreen(
+    vm: RadarViewModel,
+    padding: PaddingValues
+) {
+
+    LazyColumn(
+
+        contentPadding = PaddingValues(16.dp),
+
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+
+        modifier = Modifier.padding(padding)
+
+    ) {
+
+        item {
+
+            Text(
+                "رادار صف خرید",
+                style = MaterialTheme.typography.headlineSmall,
+                fontWeight = FontWeight.Bold
+            )
+
+            Spacer(
+                modifier = Modifier.height(4.dp)
+            )
+
+            Text(
+                "به‌روزرسانی: ${vm.lastUpdate}"
+            )
+
+            Spacer(
+                modifier = Modifier.height(8.dp)
+            )
+        }
+
+        items(vm.symbols) { symbol ->
+
+            SymbolCard(symbol)
+        }
+    }
+}
+
+@Composable
+fun SymbolCard(
+    symbol: SymbolState
+) {
+
+    Card(
+        modifier = Modifier.fillMaxWidth()
+    ) {
+
+        Column(
+            modifier = Modifier.padding(16.dp),
+            verticalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+
+                Text(
+                    symbol.symbol,
+                    fontWeight = FontWeight.Bold
+                )
+
+                Text(
+                    symbol.state,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween
+            ) {
+
+                Text(
+                    "صف: ${symbol.queue / 1_000_000.0}M"
+                )
+
+                Text(
+                    "ریسک شکست: ${symbol.risk}%"
+                )
+
+                Text(
+                    "معاملات: ${symbol.trades}"
+                )
+            }
+
+            LinearProgressIndicator(
+                progress = {
+                    symbol.risk / 100f
+                },
+                modifier = Modifier.fillMaxWidth()
+            )
+
+            when {
+                symbol.risk >= 85 -> {
+
+                    Text(
+                        "⚠ هشدار: احتمال بالای شکست صف",
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+
+                symbol.risk >= 60 -> {
+
+                    Text(
+                        "⚠ هشدار: صف در حال ضعیف‌شدن است"
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun WatchlistScreen(
+    vm: RadarViewModel,
+    padding: PaddingValues
+) {
+
+    Column(
+        modifier = Modifier
+            .padding(padding)
+            .padding(16.dp)
+    ) {
+
+        Text(
+            "واچ‌لیست",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold
+        )
+
+        Spacer(
+            modifier = Modifier.height(12.dp)
+        )
+
+        vm.symbols.forEach { symbol ->
+
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .padding(vertical = 8.dp),
+
+                horizontalArrangement =
+                    Arrangement.SpaceBetween
+            ) {
+
+                Text(
+                    symbol.symbol
+                )
+
+                Text(
+                    "${symbol.risk}%"
+                )
+            }
+        }
+    }
+}
+
+@Composable
+fun AlertsScreen(
+    padding: PaddingValues
+) {
+
+    Column(
+        modifier = Modifier
+            .padding(padding)
+            .padding(16.dp)
+    ) {
+
+        Text(
+            "هشدارها",
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold
+        )
+
+        Spacer(
+            modifier = Modifier.height(12.dp)
+        )
+
+        Text(
+            "⚠ هشدار — خودرو: احتمال شکست صف"
+        )
+
+        Spacer(
+            modifier = Modifier.height(8.dp)
+        )
+
+        Text(
+            "⚠ هشدار — فملی: تخلیه صف"
+        )
+
+        Spacer(
+            modifier = Modifier.height(20.dp)
+        )
+
+        Text(
+            "نسخه MVP: داده‌های بازار در این نسخه شبیه‌سازی شده‌اند."
+        )
+    }
+}
